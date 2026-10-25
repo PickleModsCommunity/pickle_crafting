@@ -1,7 +1,7 @@
 fx_version "cerulean"
 game "gta5"
 author "Pickle Mods"
-version "v1.2.3"
+version "v1.2.4"
 
 ui_page "nui/index.html"
 
