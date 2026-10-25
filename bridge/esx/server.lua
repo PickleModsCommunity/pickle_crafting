@@ -16,7 +16,7 @@ end
 
 function GetIdentifier(source)
     local xPlayer = ESX.GetPlayerFromId(source)
-    return xPlayer.identifier
+    return xPlayer and xPlayer.identifier
 end
 
 -- Inventory Fallback
@@ -45,6 +45,7 @@ CreateThread(function()
     Inventory.GetInventory = function(source)
         local xPlayer = ESX.GetPlayerFromId(source)
         local items = {}
+        if not xPlayer then return items end
         local data = xPlayer.getInventory()
         for i=1, #data do 
             local item = data[i]
@@ -66,26 +67,36 @@ CreateThread(function()
 
     Inventory.AddItem = function(source, name, count, metadata) -- Metadata is not required.
         local xPlayer = ESX.GetPlayerFromId(source)
+        if not xPlayer then return false end
+        local before=Inventory.GetItemCount(source,name)
         xPlayer.addInventoryItem(name, count)
         Inventory.UpdateInventory(source)
+        return Inventory.GetItemCount(source,name)==before + count
     end
 
     Inventory.RemoveItem = function(source, name, count)
         local xPlayer = ESX.GetPlayerFromId(source)
+        if not xPlayer then return false end
+        local before=Inventory.GetItemCount(source,name)
         xPlayer.removeInventoryItem(name, count)
         Inventory.UpdateInventory(source)
+        return Inventory.GetItemCount(source,name)==before - count
     end
 
     Inventory.AddWeapon = function(source, name, count, metadata) -- Metadata is not required.
         local xPlayer = ESX.GetPlayerFromId(source)
+        if not xPlayer then return false end
         xPlayer.addWeapon(name, 0)
         Inventory.UpdateInventory(source)
+        return xPlayer.hasWeapon(name)
     end
 
     Inventory.RemoveWeapon = function(source, name, count)
         local xPlayer = ESX.GetPlayerFromId(source)
+        if not xPlayer then return false end
         xPlayer.removeWeapon(name, 0)
         Inventory.UpdateInventory(source)
+        return not xPlayer.hasWeapon(name)
     end
 
     Inventory.GetItemCount = function(source, name)

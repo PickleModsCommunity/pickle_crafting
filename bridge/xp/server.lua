@@ -16,8 +16,8 @@ end
 function GetPlayerXPData(source, name)
     local data = {}
     for k,v in pairs(Config.XPCategories) do 
-        local level = GetPlayerLevel(source, name)
-        data[name] = {
+        local level = GetPlayerLevel(source, k)
+        data[k] = {
             label = v.label,
             level = level,
         }
@@ -25,6 +25,9 @@ function GetPlayerXPData(source, name)
     return data
 end
 
-for k,v in pairs(Config.XPCategories) do 
-    exports.pickle_xp:RegisterXPCategory(k, v.label, v.xpStart, v.xpFactor, v.maxLevel)
+local function registerXP()
+    if GetResourceState('pickle_xp')~='started' then return end
+    for k,v in pairs(Config.XPCategories) do exports.pickle_xp:RegisterXPCategory(k,v.label,v.xpStart,v.xpFactor,v.maxLevel) end
 end
+registerXP()
+AddEventHandler('onResourceStart',function(name) if name=='pickle_xp' then registerXP() end end)

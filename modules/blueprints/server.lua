@@ -1,77 +1,52 @@
-Blueprints = {}
-
-function GetPlayerBlueprint(source, name)
-    return (Blueprints[source] and Blueprints[source][name] or false)
-end
-
-function SetPlayerBlueprint(source, name, enabled)
-    InitializeBlueprints(source, function()
-        local identifier = GetIdentifier(source)
-        Blueprints[source][name] = enabled or nil
-        TriggerClientEvent("pickle_crafting:updateBlueprints", source, Blueprints[source])
-        MySQL.Async.fetchAll("SELECT * FROM player_blueprints WHERE identifier=@identifier;", {["@identifier"] = identifier}, 
-        function(results)
-            if not results[1] then 
-                MySQL.Async.execute("INSERT INTO player_blueprints (identifier, blueprints) VALUES (@identifier, @blueprints);", {
-                    ["@identifier"] = identifier,
-                    ["@blueprints"] = json.encode(Blueprints[source])
-                })
-            else
-                MySQL.Async.execute("UPDATE player_blueprints SET blueprints=@blueprints WHERE identifier=@identifier;", {
-                    ["@identifier"] = identifier,
-                    ["@blueprints"] = json.encode(Blueprints[source])
-                })
-            end
-        end)
-    end)
-end
-
-function InitializeBlueprints(source, cb)
-    if Blueprints[source] then
-        return cb()
+Blueprints={}
+local owners,locks={},{}
+function InitializeBlueprints(src,cb)
+    local owner=CraftIdentity(src)
+    if not owner then if cb then cb(false) end; return end
+    if owners[src]~=owner then
+        local rows=MySQL.Sync.fetchAll('SELECT blueprints FROM player_blueprints WHERE identifier=@identifier',{['@identifier']=owner})
+        if CraftIdentity(src)~=owner then return end
+        local ok,data=pcall(json.decode,rows[1] and rows[1].blueprints or '{}')
+        Blueprints[src]=ok and type(data)=='table' and data or {}
+        owners[src]=owner
     end
-    local identifier = GetIdentifier(source)
-    MySQL.Async.fetchAll("SELECT * FROM player_blueprints WHERE identifier=@identifier;", {["@identifier"] = identifier}, function(results)
-        if not results[1] then 
-            Blueprints[source] = {}
-        else
-            Blueprints[source] = json.decode(results[1].blueprints) or {}
-        end
-        TriggerClientEvent("pickle_crafting:updateBlueprints", source, Blueprints[source])
-        if cb then 
-            cb(Blueprints[source])
-        end
-    end)
+    TriggerClientEvent('pickle_crafting:updateBlueprints',src,Blueprints[src])
+    if cb then cb(Blueprints[src]) end
 end
-
-RegisterNetEvent("pickle_crafting:learnBlueprint", function(index)
-    local source = source
-    local blueprint = Config.Blueprints[index]
-    if GetPlayerBlueprint(source, index) then 
-        ShowNotification(source, _L("blueprint_have"))
-        return
+function GetPlayerBlueprint(src,name)
+    InitializeBlueprints(src)
+    return owners[src]==CraftIdentity(src) and Blueprints[src] and Blueprints[src][name]==true
+end
+function SetPlayerBlueprint(src,name,enabled)
+    InitializeBlueprints(src)
+    local owner=CraftIdentity(src)
+    if not owner or not Blueprints[src] then return false end
+    local data={}
+    for k,v in pairs(Blueprints[src]) do data[k]=v end
+    data[name]=enabled or nil
+    local rows=MySQL.Sync.execute('INSERT INTO player_blueprints (identifier,blueprints) VALUES (@identifier,@blueprints) ON DUPLICATE KEY UPDATE blueprints=@blueprints',{
+        ['@identifier']=owner,['@blueprints']=json.encode(data)})
+    if type(rows)~='number' then return false end
+    if CraftIdentity(src)==owner then Blueprints[src]=data; TriggerClientEvent('pickle_crafting:updateBlueprints',src,data) end
+    return true
+end
+RegisterNetEvent('pickle_crafting:learnBlueprint',function(name)
+    local src=source; local owner=CraftIdentity(src); local cfg=Config.Blueprints[name]
+    if not owner or not cfg or locks[owner] then return end
+    locks[owner]=true
+    if GetPlayerBlueprint(src,name) then locks[owner]=nil; return end
+    local removed=false
+    if cfg.item then
+        if Inventory.GetItemCount(src,cfg.item)<1 then locks[owner]=nil; return end
+        if cfg.remove then
+            if Inventory.RemoveItem(src,cfg.item,1)~=true then locks[owner]=nil; return end
+            removed=true
+        end
     end
-    if blueprint.item then 
-        if Inventory.GetItemCount(source, blueprint.item) < 1 then 
-            ShowNotification(source, _L("blueprint_not"))
-            return
-        end
-        if blueprint.remove then 
-            Inventory.RemoveItem(source, blueprint.item, 1)
-        end
-    end 
-    ShowNotification(source, _L("blueprint_learned"))
-    SetPlayerBlueprint(source, index, true)
+    if not SetPlayerBlueprint(src,name,true) and removed then Inventory.AddItem(src,cfg.item,1) end
+    locks[owner]=nil
 end)
-
-for k,v in pairs(Config.Blueprints) do 
-    if v.item then 
-        RegisterUsableItem(v.item, function(source)
-            if GetPlayerBlueprint(source, k) then 
-                ShowNotification(source, _L("blueprint_have"))
-                return
-            end
-            TriggerClientEvent("pickle_crafting:learnBlueprint", source, k)
-        end)
-    end
+for name,cfg in pairs(Config.Blueprints) do
+    if cfg.item then RegisterUsableItem(cfg.item,function(src) TriggerClientEvent('pickle_crafting:learnBlueprint',src,name) end) end
 end
+AddEventHandler('playerDropped',function() Blueprints[source]=nil; owners[source]=nil end)

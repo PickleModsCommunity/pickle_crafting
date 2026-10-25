@@ -42,6 +42,7 @@ CreateThread(function()
     Inventory.GetInventory = function(source)
         local xPlayer = QBCore.Functions.GetPlayer(source)
         local items = {}
+        if not xPlayer then return items end
         local data = xPlayer.PlayerData.items
         for slot, item in pairs(data) do 
             items[#items + 1] = {
@@ -62,18 +63,20 @@ CreateThread(function()
 
     Inventory.AddItem = function(source, name, count, metadata) -- Metadata is not required.
         local xPlayer = QBCore.Functions.GetPlayer(source)
-        xPlayer.Functions.AddItem(name, count, nil, metadata)
+        local ok=xPlayer.Functions.AddItem(name, count, nil, metadata)
         Inventory.UpdateInventory(source)
+        return ok==true
     end
 
     Inventory.RemoveItem = function(source, name, count)
         local xPlayer = QBCore.Functions.GetPlayer(source)
-        xPlayer.Functions.RemoveItem(name, count)
+        local ok=xPlayer.Functions.RemoveItem(name, count)
         Inventory.UpdateInventory(source)
+        return ok==true
     end
 
     Inventory.AddWeapon = function(source, name, count, metadata) -- Metadata is not required.
-        Inventory.AddItem(source, name, count, metadata)
+        return Inventory.AddItem(source, name, count, metadata)
     end
 
     Inventory.RemoveWeapon = function(source, name, count)

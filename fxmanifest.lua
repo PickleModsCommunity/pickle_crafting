@@ -28,9 +28,11 @@ client_scripts {
 server_scripts {
 	"@mysql-async/lib/MySQL.lua",
 	"bridge/**/**/server.lua",
+    "core/authority.lua",
 	"modules/**/server.lua",
 }
 
+dependencies { 'ox_lib', 'mysql-async', '/onesync' }
 lua54 'yes'
 
 escrow_ignore {

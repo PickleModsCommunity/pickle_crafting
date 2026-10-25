@@ -16,6 +16,7 @@ function ShowCraftingUI(index)
             return 
         end
     end
+    local session=CurrentTable
     local tableCfg = Config.TableTypes[CurrentTable.data.tableType or "default"]
     if not CanAccessGroup(tableCfg.groups) then 
         ShowNotification(_L("no_permission"))
@@ -25,7 +26,7 @@ function ShowCraftingUI(index)
     ServerCallback("pickle_crafting:getInventory", function(inventory)
         SendConfig()
         Wait(100)
-        if not CurrentTable then return end
+        if not CurrentTable or CurrentTable~=session then SetNuiFocus(false,false); DeleteCraftCam(); return end
         local xpData = (Config.XPEnabled and GetXPData() or nil)
         SendNUIMessage({
             type = "show",
@@ -41,6 +42,9 @@ function ShowCraftingUI(index)
 end
 
 function HideCraftingUI()
+    CurrentUI=nil
+    SetNuiFocus(false,false)
+    DeleteCraftCam()
     SendNUIMessage({
         type = "hide"
     })
@@ -148,16 +152,20 @@ RegisterNUICallback("hide", function(data, cb)
 end)
 
 RegisterNUICallback("startCrafting", function(data, cb)
+    if not CurrentTable then cb(false); return end
+    local session=CurrentTable
     local table = Tables[CurrentTable.index]
-    if not table then return end
+    if not table then cb(false); return end
     local item = table.items[data.index]
     if not item then return end
     ServerCallback("pickle_crafting:canCraft", function(result) 
-        if not result then return end
+        if not result or CurrentTable~=session then return end
         if item.action and Config.Actions[item.action.name] then 
             HideCraftingUI()
             CreateThread(function()
-                if (Config.Actions[item.action.name](item.action.params)) then 
+                if (Config.Actions[item.action.name](item.action.params)) then
+                    Wait(Config.ServerActionDuration or 1000)
+                    if CurrentTable~=session then return end
                     TriggerServerEvent("pickle_crafting:addCraftingQueue", CurrentTable.index, data.index, data.quantity)
                 end
             end)
@@ -215,9 +223,7 @@ RegisterNetEvent("pickle_crafting:startCraftingQueue", function(tableIndex, inde
 end)
 
 RegisterNetEvent("pickle_crafting:startCraftingFire", function(tableIndex, explosion)
-    SendNUIMessage({
-        type = "hideQueue"
-    })
+    if CurrentTable and CurrentTable.index==tableIndex then SendNUIMessage({type='hideQueue'}) end
     local table = Tables[tableIndex]
     if not table then return end
     

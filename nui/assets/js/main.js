@@ -1,3 +1,4 @@
+function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 const Formats = {
     category_option: `
         <div class="category-option">
@@ -157,13 +158,13 @@ function DisplayCraft(index, quantity) {
     let multiplier = quantity || 1;
     let middleHtml = Formats.craft_display;
     let item = items[index];
-    middleHtml = middleHtml.replaceAll("$[DESCRIPTION]", item.description || "No description.");
+    middleHtml = middleHtml.replaceAll("$[DESCRIPTION]", escapeHtml(item.description || "No description."));
     middleHtml = middleHtml.replaceAll("$[TIME]", item.time * multiplier)
     if (typeof xpData !== 'undefined' && item.xp && Config.XPCategories[item.xp.name]) {
         let xp = Config.XPCategories[item.xp.name];
         let xpHtml = Formats.xp;
         xpHtml = xpHtml.replaceAll("$[IMAGE]", "assets/images/" + xp.image);
-        xpHtml = xpHtml.replaceAll("$[LABEL]", xp.label);
+        xpHtml = xpHtml.replaceAll("$[LABEL]", escapeHtml(xp.label));
         xpHtml = xpHtml.replaceAll("$[LEVEL]", item.xp.level);
         if (!xpData[item.xp.name] || xpData[item.xp.name].level < item.xp.level) {
             xpHtml = xpHtml.replaceAll("$[CLASS]", "part-disabled");
@@ -190,7 +191,7 @@ function DisplayCraft(index, quantity) {
             }
             partHtml = partHtml.replaceAll("$[IMAGE]", Config.ItemImageFolder + "/" + part.name + ".png");
             partHtml = partHtml.replaceAll("$[AMOUNT]", part.amount * multiplier);
-            partHtml = partHtml.replaceAll("$[LABEL]", part.label || Config.Items[part.name].label);
+            partHtml = partHtml.replaceAll("$[LABEL]", escapeHtml(part.label || (Config.Items[part.name]?.label || part.name)));
             partsHtml += partHtml;
         }
         partsHtml += "</div>";
@@ -204,7 +205,7 @@ function DisplayCraft(index, quantity) {
         let blueprint = Config.Blueprints[item.blueprint];
         blueprintHtml = blueprintHtml.replaceAll("$[CLASS]", blueprint.enabled ? "blueprint-enabled" : "blueprint-disabled");
         blueprintHtml = blueprintHtml.replaceAll("$[IMAGE]", "assets/images/" + blueprint.image);
-        blueprintHtml = blueprintHtml.replaceAll("$[LABEL]", blueprint.label);
+        blueprintHtml = blueprintHtml.replaceAll("$[LABEL]", escapeHtml(blueprint.label));
         blueprintHtml += "</div>";
         middleHtml = middleHtml.replaceAll("$[BLUEPRINT]", blueprintHtml);
     }
@@ -216,7 +217,7 @@ function DisplayCraft(index, quantity) {
     let rewardHtml = Formats.reward;
     rewardHtml = rewardHtml.replaceAll("$[IMAGE]", Config.ItemImageFolder + "/" + item.name + ".png");
     rewardHtml = rewardHtml.replaceAll("$[AMOUNT]", "x" + (item.amount * multiplier));
-    rewardHtml = rewardHtml.replaceAll("$[LABEL]", item.label || Config.Items[item.name].label);
+    rewardHtml = rewardHtml.replaceAll("$[LABEL]", escapeHtml(item.label || (Config.Items[item.name]?.label || item.name)));
     rewardsHtml += rewardHtml;
 
     if (item.rewards && item.rewards.length > 0) {
@@ -242,7 +243,7 @@ function DisplayCraft(index, quantity) {
                 if (Config.Items[reward.name]) {
                     amount = "x" + amount;
                     image = reward.image || Config.ItemImageFolder + "/" + reward.name + ".png";
-                    label = reward.label || Config.Items[reward.name].label;
+                    label = reward.label || (Config.Items[reward.name]?.label || reward.name);
                 }
                 else {
                     exist = false;
@@ -251,7 +252,7 @@ function DisplayCraft(index, quantity) {
             if (exist) {
                 rewardHtml = rewardHtml.replaceAll("$[IMAGE]", image);
                 rewardHtml = rewardHtml.replaceAll("$[AMOUNT]", amount);
-                rewardHtml = rewardHtml.replaceAll("$[LABEL]", label);
+                rewardHtml = rewardHtml.replaceAll("$[LABEL]", escapeHtml(label));
                 rewardsHtml += rewardHtml;
             }
         }
@@ -259,7 +260,7 @@ function DisplayCraft(index, quantity) {
     rewardsHtml += "</div>";
     middleHtml = middleHtml.replaceAll("$[REWARDS]", rewardsHtml);
     CurrentQuantity = multiplier;
-    $("#lc-title").html(item.label || Config.Items[item.name].label);
+    $("#lc-title").html(item.label || (Config.Items[item.name]?.label || item.name));
     $("#lc-image").html();//`<img onerror="this.style.opacity=0" src="${Config.ItemImageFolder + "/" + item.name + ".png"}">`);
     $("#lc-middle").html(middleHtml);
     $(".quantity-amount").html("x" + CurrentQuantity);
@@ -293,7 +294,7 @@ function GetQueueHtml(index, quantity, time) {
     let item = items[index];
     let queueHtml = Formats.queue_item;
     queueHtml = queueHtml.replaceAll("$[INDEX]", index);
-    queueHtml = queueHtml.replaceAll("$[LABEL]", item.label || Config.Items[item.name].label);
+    queueHtml = queueHtml.replaceAll("$[LABEL]", escapeHtml(item.label || (Config.Items[item.name]?.label || item.name)));
     queueHtml = queueHtml.replaceAll("$[IMAGE]", Config.ItemImageFolder + "/" + item.name + ".png");
     queueHtml = queueHtml.replaceAll("$[QUANTITY]", "x" + quantity);
     queueHtml = queueHtml.replaceAll("$[TIMER]", FormatTimer(time || (item.time * quantity)));
@@ -356,12 +357,15 @@ function DisplayQueue(index, quantity, time) {
 }
 
 function RemoveQueue(index) {
+    const old = Queue[index];
+    if (old?.interval) clearInterval(old.interval);
     delete Queue[index];
     let item = items[index];
     if ($("#queue-"+index).length) {
         $("#queue-"+index).removeClass("active");
+        const oldElement = $("#queue-"+index);
         setTimeout(()=>{
-            $("#queue-"+index).remove()
+            if (!Queue[index]) oldElement.remove()
         }, 1000)
     }
 }
@@ -441,8 +445,8 @@ function InitializeCrafting(craftingData, hide) {
         let found = false;
 
         template = template.replaceAll("$[IMAGE]", category.image);
-        template = template.replaceAll("$[LABEL]", category.label);
-        template = template.replaceAll("$[DESCRIPTION]", category.description || "No description.");
+        template = template.replaceAll("$[LABEL]", escapeHtml(category.label));
+        template = template.replaceAll("$[DESCRIPTION]", escapeHtml(category.description || "No description."));
         middleHtml += template
         
         for (let j=0; j<items.length; j++) {
@@ -461,15 +465,15 @@ function InitializeCrafting(craftingData, hide) {
                         }
                     }
                 }
-                if (!(typeof xpData !== 'undefined' && item.xp && Config.XPCategories[item.xp.name] && item.xp.level <= xpData[item.xp.name].level)) {
+                if (item.xp && !(xpData && xpData[item.xp.name] && Config.XPCategories[item.xp.name] && item.xp.level <= xpData[item.xp.name].level)) {
                     enabled = false;
                 }
                 if (Config.Items[item.name]) {
                     itemTemplate = itemTemplate.replaceAll("$[CLASS]", enabled ? "item-enabled" : "item-disabled");
                     itemTemplate = itemTemplate.replaceAll("$[INDEX]", j);
                     itemTemplate = itemTemplate.replaceAll("$[IMAGE]", Config.ItemImageFolder + "/" + item.name + ".png");
-                    itemTemplate = itemTemplate.replaceAll("$[LABEL]", item.label || Config.Items[item.name].label);
-                    itemTemplate = itemTemplate.replaceAll("$[DESCRIPTION]", item.description || "No description.");
+                    itemTemplate = itemTemplate.replaceAll("$[LABEL]", escapeHtml(item.label || (Config.Items[item.name]?.label || item.name)));
+                    itemTemplate = itemTemplate.replaceAll("$[DESCRIPTION]", escapeHtml(item.description || "No description."));
                     itemsHtml += itemTemplate;
                 }
             }
