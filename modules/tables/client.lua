@@ -39,6 +39,7 @@ end
 function DeleteTable(index)
     if not SpawnedTables[index] then return end
     DeleteEntity(SpawnedTables[index])
+    SpawnedTables[index]=nil
     DeleteDisplayItem()
 end
 
@@ -52,7 +53,7 @@ function CreateCraftCam(entity, offset, rotation, time)
     local pos = GetOffsetFromEntityInWorldCoords(entity, offset.x, offset.y, offset.z)
     if CurrentCam then 
         SetCamCoord(CurrentCam, pos.x, pos.y, pos.z)
-        SetCamRot(cam, rot.x, rot.y, rot.z, 2)
+        SetCamRot(CurrentCam, rot.x, rot.y, rot.z, 2)
         return CurrentCam
     else
         local cam = CreateCamWithParams("DEFAULT_SCRIPTED_CAMERA", pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, 45.00, false, 0)
@@ -69,6 +70,8 @@ function CreateCraftCam(entity, offset, rotation, time)
 end
 
 function DeleteCraftCam(cam)
+    cam=cam or CurrentCam
+    if not cam then return end
 	SetCamActive(cam, false)
 	RenderScriptCams(false, true, 1, true, true)
     DestroyCam(cam)

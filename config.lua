@@ -12,7 +12,7 @@ Config.TheftDistance = 10.0 -- Theft is allowed when the crafter is further than
 
 Config.ItemImageFolder = "nui://ox_inventory/web/images" -- Don't put a slash at the end.
 
-Config.PersistentTables = false -- Save placed tables in the database.
+Config.PersistentTables = true -- Save placed tables and paid queues in resource KVP storage.
 
 Config.XPEnabled = true -- Enables the XP feature for adding and checking XP Levels.
 

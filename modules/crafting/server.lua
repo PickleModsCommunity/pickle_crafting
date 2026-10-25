@@ -1,296 +1,180 @@
-function StartNextQueue(tableIndex)
-    local table = Tables[tableIndex]
-    if (not table) then return end
-    if (not table.crafting) then return end
-    local queue = SortCraftingQueue(Tables[tableIndex].crafting)
-    if (#queue < 1) then 
-        return
+local sequence=0
+local function itemAt(t,index)
+    return t and CraftInteger(index,1,#t.items) and t.items[index]
+end
+function RemoveQueue(tableIndex,index)
+    local t=Tables[tableIndex]
+    if not t or not t.crafting then return end
+    t.crafting[index]=nil
+    TriggerClientEvent('pickle_crafting:removeCraftingQueue',-1,tableIndex,index)
+    SaveCraftTables()
+end
+function CheckParts(src,quantity,parts)
+    local totals={}
+    for _,p in ipairs(parts or {}) do
+        local key=(p.type or 'item')..':'..p.name
+        local entry=totals[key] or {name=p.name,type=p.type,amount=0}
+        entry.amount=entry.amount+(p.amount or 1)*quantity; totals[key]=entry
     end
-    for i=1, #queue do
-        local queueItem = queue[i]
-        local queueIndex = queueItem.index
-        local item = table.items[queueIndex]
-        if (queueItem.finishTime ~= nil and queueItem.finishTime - os.time() <= 0) then 
-            if not item.destroyTime or Tables[tableIndex].crafting[queueIndex].cooked then
-                return
-            end
-            Tables[tableIndex].crafting[queueIndex].cooked = true
-            ShowNotification(Tables[tableIndex].crafting[queueIndex].source, _L("cooked"))
-            SetTimeout(1000 * item.destroyTime, function()
-                if Tables[tableIndex] and Tables[tableIndex].crafting[queueIndex] and Tables[tableIndex].crafting[queueIndex].finishTime == queueItem.finishTime then
-                    if item.destroyFire then 
-                        local source = Tables[tableIndex].crafting[queueIndex].source
-                        Tables[tableIndex].activeFire = true
-                        ShowNotification(source, _L(item.explodeOnBurn and "exploded" or "destroyed"))
-                        Tables[tableIndex].crafting = {}
-                        UpdateTables(tableIndex)
-                        TriggerClientEvent("pickle_crafting:startCraftingFire", -1, tableIndex, item.explodeOnBurn, source)
-                        if not table.static then
-                            if item.explodeOnBurn and Config.RemoveTableSettings.explosion then 
-                            RemoveTable(tableIndex)
-                            elseif not item.explodeOnBurn then
-                                SetTimeout(1000 * Config.RemoveTableSettings.fire, function() 
-                                    if Tables[tableIndex].activeFire then 
-                                        RemoveTable(tableIndex)
-                                    end 
-                                end)
-                            end
-                        end
-                    else
-                        ShowNotification(Tables[tableIndex].crafting[queueIndex].source, _L("burned"))
-                        RemoveQueue(tableIndex, index)
-                    end
-                end
-            end)
-        elseif (queueItem.finishTime ~= nil) then 
-            return
-        else
-            local quantity = Tables[tableIndex].crafting[queueIndex].quantity
-            Tables[tableIndex].crafting[queueIndex].finishTime = os.time() + (quantity * item.time)
-            TriggerClientEvent("pickle_crafting:startCraftingQueue", -1, tableIndex, queueIndex, Tables[tableIndex], os.time())
-            SetTimeout((1000 * (quantity * item.time)) + 1000, function()
-                StartNextQueue(tableIndex)
-            end)
-            break
-        end
+    for _,p in pairs(totals) do
+        if p.type=='weapon' then if not Inventory.HasWeapon(src,p.name) then return false end
+        elseif Inventory.GetItemCount(src,p.name)<p.amount then return false end
     end
-    UpdateTables(tableIndex)
     return true
 end
-
-function RemoveQueue(tableIndex, index)
-    Tables[tableIndex].crafting[index] = nil
-    TriggerClientEvent("pickle_crafting:removeCraftingQueue", -1, tableIndex, index)
-end
-
-function CheckParts(source, quantity, parts)
-    if not parts or #parts < 1 then return true end
-    local success = true
-    local missingItems = {}
-    for i=1, #parts do 
-        local part = parts[i]
-        if (not part.type or part.type == "item") then
-            local remaining = Inventory.GetItemCount(source, part.name) - (part.amount * quantity)
-            if remaining < 0 then 
-                success = false
-                missingItems[#missingItems + 1] = {index = i, name = part.name, count = remaining}
+function TakeParts(src,quantity,parts)
+    local removed={}
+    for _,p in ipairs(parts or {}) do
+        if p.remove~=false then
+            local take=p.type=='weapon' and Inventory.RemoveWeapon or Inventory.RemoveItem
+            local give=p.type=='weapon' and Inventory.AddWeapon or Inventory.AddItem
+            if take(src,p.name,(p.amount or 1)*quantity)~=true then
+                for _,r in ipairs(removed) do r.give(src,r.name,r.amount) end
+                return false
             end
-        elseif (part.type == "weapon" and not Inventory.HasWeapon(source, part.name)) then
-            success = false
-            missingItems[#missingItems + 1] = {index = i, name = part.name, count = remaining}
+            removed[#removed+1]={give=give,name=p.name,amount=(p.amount or 1)*quantity}
         end
     end
-    return success, missingItems
+    return true
 end
-
-function TakeParts(source, quantity, parts)
-    if not parts or #parts < 1 then return end
-    for i=1, #parts do 
-        local part = parts[i]
-        if (part.remove == nil or part.remove) then
-            if (not part.type or part.type == "item") then
-                Inventory.RemoveItem(source, part.name, part.amount * quantity)
-            elseif (part.type == "weapon") then
-                Inventory.RemoveWeapon(source, part.name, part.amount * quantity)
+function CheckRewards(src,quantity,data,rewards)
+    local all={data.item}
+    for _,r in ipairs(rewards or {}) do all[#all+1]=r end
+    for _,r in ipairs(all) do
+        if r.type=='weapon' then if Inventory.HasWeapon(src,r.name) then return false end
+        elseif r.type~='xp' and not Inventory.CanCarryItem(src,r.name,r.amount*quantity) then return false end
+    end
+    return true
+end
+-- Persist each successful award so a rejected later reward does not replay earlier awards.
+function GiveRewards(src,quantity,data,rewards,q)
+    q.granted=q.granted or {}
+    if q.failedRoll==nil then q.failedRoll=data.item.chance and math.random(1,100)>data.item.chance or false end
+    if q.failedRoll then return true end
+    local all={data.item}
+    for _,r in ipairs(rewards or {}) do all[#all+1]=r end
+    for i,r in ipairs(all) do
+        if not q.granted[i] then
+            local ok
+            if r.type=='xp' then
+                if Config.XPEnabled then ok=pcall(AddPlayerXP,src,r.name,r.amount*quantity) else ok=true end
+            else
+                local give=r.type=='weapon' and Inventory.AddWeapon or Inventory.AddItem
+                ok=give(src,r.name,r.amount*quantity,r.createItem and r.createItem(data) or nil)==true
             end
+            if not ok then return false end
+            q.granted[i]=true
+            SaveCraftTables()
+        end
+    end
+    return true
+end
+function GiveParts(src,quantity,parts,q)
+    q.refunded=q.refunded or {}
+    for i,p in ipairs(parts or {}) do
+        if p.remove~=false and not q.refunded[i] then
+            local give=p.type=='weapon' and Inventory.AddWeapon or Inventory.AddItem
+            if give(src,p.name,(p.amount or 1)*quantity)~=true then return false end
+            q.refunded[i]=true; SaveCraftTables()
+        end
+    end
+    return true
+end
+function StartNextQueue(tableIndex)
+    local t=Tables[tableIndex]
+    if not t or not t.crafting or t.activeFire then return end
+    local active=false
+    for _,q in pairs(t.crafting) do if q.finishTime and q.finishTime>os.time() then active=true end end
+    if active then return end
+    local queue=SortCraftingQueue(t.crafting)
+    for _,q in ipairs(queue) do
+        if not q.finishTime then
+            local item=t.items[q.index]
+            q.finishTime=os.time()+q.quantity*(item.time or 0)
+            TriggerClientEvent('pickle_crafting:startCraftingQueue',-1,tableIndex,q.index,CraftView(t),os.time())
+            SaveCraftTables(); break
         end
     end
 end
-
-function GiveParts(source, quantity, parts)
-    if not parts or #parts < 1 then return end
-    for i=1, #parts do 
-        local part = parts[i]
-        if (part.remove == nil or part.remove) then
-            if (not part.type or part.type == "item") then
-                Inventory.AddItem(source, part.name, part.amount * quantity)
-            elseif (part.type == "weapon") then
-                Inventory.AddWeapon(source, part.name, part.amount * quantity)
-            end
-        end
+RegisterCallback('pickle_crafting:getTime',function(src,cb) cb(os.time()) end)
+local function validate(src,tableIndex,index,quantity)
+    local t=Tables[tableIndex]; local item=itemAt(t,index)
+    if not item or not CraftInteger(quantity,1,Config.MaxCraftQuantity or 100) or not CraftAccess(src,t) or t.activeFire
+        or (t.crafting and t.crafting[index]) then return end
+    if item.blueprint and not GetPlayerBlueprint(src,item.blueprint) then return end
+    if Config.XPEnabled and item.xp then
+        local ok,level=pcall(GetPlayerLevel,src,item.xp.name)
+        if not ok or type(level)~='number' or level<item.xp.level then return end
     end
+    if not CheckParts(src,quantity,item.parts) then return end
+    return t,item
 end
-
-function CheckRewards(source, quantity, craftingData, rewards)
-    local success = true
-    local cantCarry = {}
-    if (not reward.type or reward.type == "item") and not Inventory.CanCarryItem(source, craftingData.item.name, craftingData.item.amount * quantity) then 
-        success = false
-        cantCarry[#cantCarry + 1] = {index = 1, name = craftingData.item.name, amount = craftingData.item.amount * quantity}
-    elseif (reward.type == "weapon" and Inventory.HasWeapon(source, part.name)) then
-        success = false
-        cantCarry[#cantCarry + 1] = {index = 1, name = craftingData.item.name, amount = craftingData.item.amount * quantity}
-    end
-    if not rewards or #rewards < 1 then 
-        return success, missingItems 
-    end
-    for i=1, #rewards do 
-        local reward = rewards[i]
-        if (not reward.type or reward.type == "item") and not Inventory.CanCarryItem(source, reward.name, reward.amount * quantity) then 
-            success = false
-            cantCarry[#cantCarry + 1] = {index = i + 1, name = reward.name, amount = reward.amount * quantity}
-        end
-    end
-    return success, missingItems
-end
-
-function GiveRewards(source, quantity, craftingData, rewards)
-    if craftingData.item.chance then 
-        local result = math.random(1, 100)
-        if craftingData.item.chance < result then 
-            ShowNotification(source, _L("crafting_failed"))
-            return
-        end
-    end
-    Inventory.AddItem(source, craftingData.item.name, craftingData.item.amount * quantity, craftingData.item.createItem and craftingData.item.createItem(craftingData) or nil)
-    if not rewards or #rewards < 1 then 
-        return success, missingItems 
-    end
-    for i=1, #rewards do 
-        local reward = rewards[i]
-        if not reward.type or reward.type == "item" then
-            Inventory.AddItem(source, reward.name, reward.amount * quantity, reward.createItem and reward.createItem(craftingData) or nil)
-        elseif reward.type == "weapon" then
-            Inventory.AddWeapon(source, reward.name, reward.amount * quantity, reward.createItem and reward.createItem(craftingData) or nil)
-        elseif Config.XPEnabled and reward.type == "xp" then 
-            AddPlayerXP(source, reward.name, reward.amount * quantity)
-        end
-    end
-end
-
-RegisterCallback("pickle_crafting:getTime", function(source, cb) 
-    cb(os.time())
-end)
-
-RegisterCallback("pickle_crafting:canCraft", function(source, cb, tableIndex, index, quantity)
-    local source = source
-    local table = Tables[tableIndex]
-    if (not table) then return cb(false) end
-    if (table.crafting and table.crafting[index]) then 
-        ShowNotification(source, _L("crafting_already"))
-        return cb(false)
-    end
-    local item = table.items[index]
-    if item.blueprint and not GetPlayerBlueprint(source, item.blueprint) then 
-        ShowNotification(source, _L("blueprint_not_learned"))
-        return cb(false)
-    end
-    if Config.XPEnabled and item.xp and not (GetPlayerLevel(source, item.xp.name) >= item.xp.level) then 
-        ShowNotification(source, _L("xp_not_level"))
-        return cb(false)
-    end
-    if not item.time or item.time <= 0 then 
-        local success, missing = CheckParts(source, quantity, item.parts)
-        if success then 
-            local craftingData = {tableIndex = tableIndex, index = index, tableType = table.tableType, item = item}
-            local success, cantCarry = CheckRewards(source, quantity, craftingData, item.rewards)
-            if not success then 
-                ShowNotification(source, _L("no_room"))
-                return cb(false)
-            end
-        else 
-            ShowNotification(source, _L("parts_missing"))
-            return cb(false)
-        end
-    end
-    local success, missing = CheckParts(source, quantity, item.parts)
-    if not success then 
-        ShowNotification(source, _L("parts_missing"))
-        return cb(false)
-    end
+RegisterCallback('pickle_crafting:canCraft',function(src,cb,tableIndex,index,quantity)
+    local t,item=validate(src,tableIndex,index,quantity)
+    if not t then cb(false); return end
+    CraftPermits[src]={owner=CraftIdentity(src),tableIndex=tableIndex,index=index,quantity=quantity,
+        ready=GetGameTimer()+(item.action and (Config.ServerActionDuration or 1000) or 0),expires=GetGameTimer()+120000}
     cb(true)
 end)
-
-RegisterNetEvent("pickle_crafting:addCraftingQueue", function(tableIndex, index, quantity)
-    local source = source
-    local table = Tables[tableIndex]
-    if (not table) then return end
-    if (table.crafting and table.crafting[index]) then 
-        ShowNotification(source, _L("crafting_already"))
-        return 
+RegisterNetEvent('pickle_crafting:addCraftingQueue',function(tableIndex,index,quantity)
+    local src=source; local permit=CraftPermits[src]
+    if not permit or CraftLocks[src] or permit.owner~=CraftIdentity(src) or permit.tableIndex~=tableIndex
+        or permit.index~=index or permit.quantity~=quantity or GetGameTimer()<permit.ready or GetGameTimer()>permit.expires then return end
+    local t,item=validate(src,tableIndex,index,quantity)
+    if not t then return end
+    CraftPermits[src]=nil; CraftLocks[src]=true
+    local key=tostring(tableIndex)..':'..index
+    if CraftLocks[key] then CraftLocks[src]=nil; return end
+    CraftLocks[key]=true
+    if item.action and Config.ServerPreCraft and Config.ServerPreCraft(src,tableIndex,index,quantity)~=true then
+        CraftLocks[src],CraftLocks[key]=nil,nil; return
     end
-    if (not table.crafting) then Tables[tableIndex].crafting = {} end
-    local item = table.items[index]
-    if item.blueprint and not GetPlayerBlueprint(source, item.blueprint) then 
-        ShowNotification(source, _L("blueprint_not_learned"))
-        return
+    if TakeParts(src,quantity,item.parts) then
+        sequence=sequence+1
+        t.crafting=t.crafting or {}
+        t.crafting[index]={source=src,owner=CraftIdentity(src),quantity=quantity,queueTime=os.time(),sequence=sequence}
+        SaveCraftTables()
+        StartNextQueue(tableIndex)
+        UpdateTables(tableIndex)
     end
-    if Config.XPEnabled and item.xp and not (GetPlayerLevel(source, item.xp.name) >= item.xp.level) then 
-        ShowNotification(source, _L("xp_not_level"))
-        return
-    end
-    if not item.time or item.time <= 0 then 
-        local success, missing = CheckParts(source, quantity, item.parts)
-        if success then 
-            local craftingData = {tableIndex = tableIndex, index = index, tableType = table.tableType, item = item}
-            local success, cantCarry = CheckRewards(source, quantity, craftingData, item.rewards)
-            if success then 
-                TakeParts(source, quantity, item.parts)
-                GiveRewards(source, quantity, craftingData, item.rewards)
-            else 
-                ShowNotification(source, _L("no_room"))
+    CraftLocks[src],CraftLocks[key]=nil,nil
+end)
+local function settle(src,tableIndex,index,cancel)
+    local t=Tables[tableIndex]; local item=itemAt(t,index)
+    local q=t and t.crafting and t.crafting[index]
+    if not q or not item or q.busy or not CraftCanOwn(src,t,q) then return end
+    if not cancel and (not q.finishTime or q.finishTime>os.time()) then return end
+    if cancel and q.granted and next(q.granted) then return end
+    if not cancel and q.refunded and next(q.refunded) then return end
+    q.busy=true
+    local ok,result=pcall(function()
+        if cancel then return GiveParts(src,q.quantity,item.parts,q) end
+        if not CheckRewards(src,q.quantity,{item=item},item.rewards) and not q.granted then return false end
+        return GiveRewards(src,q.quantity,{item=item,tableIndex=tableIndex,index=index,tableType=t.tableType},item.rewards,q)
+    end)
+    q.busy=nil
+    if ok and result then RemoveQueue(tableIndex,index); StartNextQueue(tableIndex); UpdateTables(tableIndex) end
+end
+RegisterNetEvent('pickle_crafting:removeCraftingQueue',function(tableIndex,index) settle(source,tableIndex,index,true) end)
+RegisterNetEvent('pickle_crafting:collectCraftingQueue',function(tableIndex,index) settle(source,tableIndex,index,false) end)
+AddEventHandler('playerDropped',function() CraftPermits[source]=nil; CraftLocks[source]=nil end)
+CreateThread(function()
+    while true do
+        Wait(1000)
+        for id,t in pairs(Tables) do
+            for index,q in pairs(t.crafting or {}) do
+                local item=t.items[index]
+                if not q.busy and item and item.destroyTime and q.finishTime and os.time()>=q.finishTime+item.destroyTime then
+                    RemoveQueue(id,index)
+                    if item.destroyFire then
+                        t.activeFire=true; t.fireGeneration=(t.fireGeneration or 0)+1
+                        TriggerClientEvent('pickle_crafting:startCraftingFire',-1,id,item.explodeOnBurn,q.source)
+                        -- Other players retain their crafts and may collect/cancel after extinguishing.
+                    end
+                    SaveCraftTables(); UpdateTables(id)
+                end
             end
-        else 
-            ShowNotification(source, _L("parts_missing"))
+            StartNextQueue(id)
         end
-        return
-    end
-    local success, missing = CheckParts(source, quantity, item.parts)
-    if success then 
-        TakeParts(source, quantity, item.parts)
-    else 
-        ShowNotification(source, _L("parts_missing"))
-        return
-    end
-    Tables[tableIndex].crafting[index] = {
-        source = source,
-        quantity = quantity,
-        queueTime = os.time()
-    }
-    local queue = SortCraftingQueue(Tables[tableIndex].crafting)
-    if #queue == 1 then 
-        Tables[tableIndex].crafting[index].finishTime = os.time() + (quantity * item.time)
-        TriggerClientEvent("pickle_crafting:startCraftingQueue", -1, tableIndex, index, Tables[tableIndex], os.time())
-        SetTimeout((1000 * (quantity * item.time)) + 1000, function()
-            StartNextQueue(tableIndex)
-        end)
-    else
-        TriggerClientEvent("pickle_crafting:addCraftingQueue", -1, tableIndex, index, Tables[tableIndex])
-    end
-    UpdateTables(tableIndex)
-end)
-
-RegisterNetEvent("pickle_crafting:removeCraftingQueue", function(tableIndex, index)
-    local source = source
-    local table = Tables[tableIndex]
-    if not table then return end
-    local item = table.items[index]
-    if not item then return end
-    local crafting = table.crafting[index]
-    if not crafting then return end
-    if crafting.source ~= source and Table.TheftDistance > 0 and (#(GetEntityCoords(PlayerPedId()) - table.coords) > Table.TheftDistance) then
-        ShowNotification(source, _L("crafting_player_near"))
-        return
-    end
-    RemoveQueue(tableIndex, index)
-    GiveParts(source, crafting.quantity, item.parts)
-    if not StartNextQueue(tableIndex) then
-        UpdateTables(tableIndex)
-    end
-end)
-
-RegisterNetEvent("pickle_crafting:collectCraftingQueue", function(tableIndex, index)
-    local source = source
-    local table = Tables[tableIndex]
-    if not table then return end
-    local item = table.items[index]
-    if not item then return end
-    local crafting = table.crafting[index]
-    if not crafting then return end
-    local craftingData = {tableIndex = tableIndex, index = index, tableType = table.tableType, item = item}
-    RemoveQueue(tableIndex, index)
-    GiveRewards(source, crafting.quantity, craftingData, item.rewards)
-    if not StartNextQueue(tableIndex) then
-        UpdateTables(tableIndex)
     end
 end)
